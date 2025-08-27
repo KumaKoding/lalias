@@ -1,7 +1,7 @@
 #include <stddef.h>
 #define MAX_SUB_CMDS 128
 #define MAX_ALIAS_COMPONENTS 256
-#define RESTRICTED_NAME_CHARACTERS " \n"
+#define RESTRICTED_NAME_CHARACTERS " \n{}<>"
 
 typedef struct char_v char_v;
 typedef struct alias_node alias_node;

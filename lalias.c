@@ -24,6 +24,8 @@ enum error_code
 	ERROR_FAILED_READ,
 	ERROR_UNEXPECTED_EOF,
 	ERROR_INVALID_CHARACTERS_IN_LABEL,
+	ERROR_NO_NAME,
+	ERROR_NO_COMMAND
 };
 
 void lal_error(enum error_code code)
@@ -56,6 +58,12 @@ void lal_error(enum error_code code)
 			exit(1);
 		case ERROR_INVALID_CHARACTERS_IN_LABEL:
 			printf("ERROR: Restricted characters in label(s) in .lal.\n");
+			exit(1);	
+		case ERROR_NO_NAME:
+			printf("ERROR: Error occurred when parsing rule name.\n");
+			exit(1);
+		case ERROR_NO_COMMAND:
+			printf("ERROR: Error occurred when parsing rule command.\n");
 			exit(1);
 	}
 }
@@ -158,7 +166,7 @@ off_t fsize(const char *file_name)
 
 bool safe_compare(char *buf, int index, int len, off_t size, const char *str)
 {
-	if(index + len < size)
+	if(index + len >= size)
 	{
 		return FALSE;
 	}
@@ -191,7 +199,7 @@ int parse_name(alias_node *label, char *contents, int *index, off_t size)
 {
 	label->name = init_char_v();
 
-	while(contents[*index] == ':')
+	while(contents[*index] != ':')
 	{
 		if(is_restricted(contents[*index]))
 		{
@@ -215,29 +223,37 @@ int parse_inner(alias_node *label, char *contents, int *index, off_t size)
 {
 	if(safe_compare(contents, *index, strlen("<<"), size, "<<"))
 	{
+		*index += strlen("<<");
+
 		label->components_len++;
 		label->components[label->components_len - 1].type = LAL_ARG;
 		label->components[label->components_len - 1].contents = init_char_v();
-		int depth = 0;
+		int depth = 1;
 
 		while(depth > 0)
 		{
+			int jump = 1;
+
 			if(safe_compare(contents, *index, strlen("<<"), size, "<<"))
 			{
 				depth++;
-				*index += strlen("<<");
+				jump = strlen("<<");
 			}
 			else if(safe_compare(contents, *index, strlen(">>"), size, ">>"))
 			{
 				depth--;
-				*index += strlen(">>");
+				jump = strlen(">>");
 			}
 
 			if(depth > 0)
 			{
-				char_v_append(label->components[label->components_len - 1].contents, contents[*index]);
-				(*index)++;
+				for(int i = 0; i < jump; i++)
+				{
+					char_v_append(label->components[label->components_len - 1].contents, contents[*index + i]);
+				}
 			}
+
+			*index += jump;
 
 			if(*index >= size)
 			{
@@ -247,14 +263,21 @@ int parse_inner(alias_node *label, char *contents, int *index, off_t size)
 	}
 	else 
 	{
-		if(label->components[label->components_len - 1].type != LAL_PLAIN)
+		if(label->components_len == 0 || label->components[label->components_len - 1].type != LAL_PLAIN)
 		{
 			label->components_len++;
 			label->components[label->components_len - 1].type = LAL_PLAIN;
 			label->components[label->components_len - 1].contents = init_char_v();
 		}
 
-		char_v_append(label->components[label->components_len].contents, contents[*index]);
+		// for(int i = 0; i < label->components_len; i++)
+		// {
+		// 	printf("%d ", label->components[i].type);
+		// }
+		// printf("\n");
+
+		char_v_append(label->components[label->components_len - 1].contents, contents[*index]);
+		(*index)++;
 	}
 
 
@@ -265,7 +288,10 @@ int parse_line(alias_node *label, char *contents, int *index, off_t size)
 {
 	if(safe_compare(contents, *index, strlen("{"), size, "{"))
 	{
+		*index += strlen("{");
+
 		label->components[label->components_len].type = LAL_NEW_LINE;
+		label->components_len++;
 
 		int depth = 1;
 
@@ -274,18 +300,17 @@ int parse_line(alias_node *label, char *contents, int *index, off_t size)
 			if(safe_compare(contents, *index, strlen("{"), size, "{"))
 			{
 				depth++;
-				*index += strlen("{");
+				(*index)++;
 			}
-			else if(safe_compare(contents, *index, strlen("{"), size, "{"))
+			else if(safe_compare(contents, *index, strlen("}"), size, "}"))
 			{
 				depth--;
-				*index += strlen("}");
+				(*index)++;
 			}
 
 			if(depth > 0)
 			{
 				parse_inner(label, contents, index, size);
-				(*index)++;
 			}
 
 			if(*index >= size)
@@ -293,6 +318,10 @@ int parse_line(alias_node *label, char *contents, int *index, off_t size)
 				return 0;
 			}
 		}
+	}
+	else 
+	{
+		(*index)++;
 	}
 
 	return 1;
@@ -304,17 +333,26 @@ int parse_componenets(alias_node *label, char *contents, int *index, off_t size)
 
 	while(!safe_compare(contents, *index, strlen("<<END>>"), size, "<<END>>"))
 	{
-		parse_line(label, contents, index, size);
+		if(parse_line(label, contents, index, size) == 0)
+		{
+			lal_error(ERROR_NO_COMMAND);
+		}
 
 		if(*index >= size)
 		{
 			return 0;
 		}
-
-		(*index)++;
 	}
 
+	*index += strlen("<<END>>");
+
 	label->components[label->components_len].type = LAL_END;
+	label->components_len++;
+
+	while(is_restricted(contents[*index]))
+	{
+		(*index)++;
+	}
 
 	return 1;
 }
@@ -322,6 +360,7 @@ int parse_componenets(alias_node *label, char *contents, int *index, off_t size)
 alias_node *process_lal_file()
 {
 	alias_node *labels = malloc(sizeof(struct alias_node));
+	labels->next_node = NULL;
 	labels->components_len = 0;
 
 	FILE *file = fopen(".lal", "r+b");
@@ -356,40 +395,55 @@ alias_node *process_lal_file()
 	{
 		if(parse_name(labels_head, contents, &c, size) == 0)
 		{
+			lal_error(ERROR_NO_NAME);
 		}
 
-		if(labels_head->components[labels_head->components_len - 1].type == LAL_END)
+		print_char_v(*labels_head->name);
+		printf("\n");
+
+		if(parse_componenets(labels_head, contents, &c, size) == 0)
+		{
+			lal_error(ERROR_NO_COMMAND);
+		}
+
+		if(c < size && labels_head->components[labels_head->components_len - 1].type == LAL_END)
 		{
 			labels_head->next_node = malloc(sizeof(alias_node));
 			labels_head = labels_head->next_node;
 			labels_head->components_len = 0;
+			labels_head->next_node = NULL;
 		}
 	}
 
-	print_char_v(*labels->name);
-
-	for(int i = 0; i < labels->components_len; i++)
+	for(alias_node *node = labels; node != NULL; node = node->next_node)
 	{
-		if(labels->components[i].type == LAL_NEW_LINE)
-		{
-			printf("\n");
-		}
-		else if(labels->components[i].type == LAL_END)
-		{
-			printf("\n<<END>>");
-		}
-		else if(labels->components[i].type == LAL_PLAIN)
-		{
-			print_char_v(*labels->components[i].contents);
-		}
-		else if(labels->components[i].type == LAL_ARG)
-		{
-			printf("<<");
-			print_char_v(*labels->components[i].contents);
-			printf(">>");
-		}
-	}
+		printf("%p\n", node);
+		print_char_v(*node->name);
 
+		for(int i = 0; i < node->components_len; i++)
+		{
+			if(node->components[i].type == LAL_NEW_LINE)
+			{
+				printf("\n");
+			}
+			else if(node->components[i].type == LAL_END)
+			{
+				printf("\n<<END>>");
+			}
+			else if(node->components[i].type == LAL_PLAIN)
+			{
+				print_char_v(*node->components[i].contents);
+			}
+			else if(labels->components[i].type == LAL_ARG)
+			{
+				printf("<<");
+				print_char_v(*node->components[i].contents);
+				printf(">>");
+			}
+		}
+
+		printf("\n");
+	}
 
 	return labels;
 }
