@@ -4,9 +4,14 @@
 
 int main(int argc, char *argv[])
 {
-	struct cmd *cmd = parse_inputs(argc, argv);
+	FILE *lal = open_lal();
 
-	process_lal_file();
+	commands *cmds = parse_inputs(argc, argv);
+	alias_node *nodes = process_lal_file(lal);
+
+	run_command(cmds, nodes, lal);
+
+	print_nodes(nodes);
 
 	return 0;
 }

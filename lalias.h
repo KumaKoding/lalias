@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stddef.h>
 #define MAX_SUB_CMDS 128
 #define MAX_ALIAS_COMPONENTS 256
@@ -5,6 +6,7 @@
 
 typedef struct char_v char_v;
 typedef struct alias_node alias_node;
+typedef struct commands commands;
 
 enum sub_cmd_type 
 {
@@ -27,7 +29,7 @@ struct sub_cmd
 	char_v *contents;
 };
 
-struct cmd
+struct commands
 {
 	struct sub_cmd sub_cmds[MAX_SUB_CMDS];
 	int n_cmds;
@@ -54,6 +56,9 @@ struct alias_node
 	alias_node *next_node;
 };
 
-struct cmd *parse_inputs(int argc, char *argv[]);
-alias_node *process_lal_file();
+commands *parse_inputs(int argc, char *argv[]);
+alias_node *process_lal_file(FILE *file);
+int run_command(commands *cmd, struct alias_node *labels, FILE *file);
+FILE *open_lal();
+void print_nodes(alias_node *nodes);
 
