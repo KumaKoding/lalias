@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
 	commands *cmds = parse_inputs(argc, argv);
 	alias_node *nodes = process_lal_file(lal);
 
-	run_command(cmds, nodes, lal);
+	run_command(cmds, &nodes, lal);
 
 	print_nodes(nodes);
 

@@ -20,6 +20,7 @@ enum alias_type
 	LAL_PLAIN,
 	LAL_ARG,
 	LAL_NEW_LINE,
+	LAL_END_LINE,
 	LAL_END,
 };
 
@@ -58,7 +59,7 @@ struct alias_node
 
 commands *parse_inputs(int argc, char *argv[]);
 alias_node *process_lal_file(FILE *file);
-int run_command(commands *cmd, struct alias_node *labels, FILE *file);
+int run_command(commands *cmd, struct alias_node **labels, FILE *file);
 FILE *open_lal();
 void print_nodes(alias_node *nodes);
 
