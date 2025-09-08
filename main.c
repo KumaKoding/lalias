@@ -11,7 +11,13 @@ int main(int argc, char *argv[])
 
 	run_command(cmds, &nodes, lal);
 
-	print_nodes(nodes);
+	// free cmd
+	// free nodes
+	
+
+	fclose(lal);
+
+	// print_nodes(nodes);
 
 	return 0;
 }

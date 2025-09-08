@@ -1,4 +1,3 @@
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +30,8 @@ enum error_code
 	ERROR_INSUFFICIENT_INPUTS,
 	ERROR_BAD_NUMERICAL_INPUT,
 	ERROR_FAILED_TO_TRUNCATE,
-	ERROR_LABEL_NOT_FOUND
+	ERROR_LABEL_NOT_FOUND,
+	ERROR_LAL_REWRITE_FAILURE
 };
 
 void lal_error(enum error_code code)
@@ -85,6 +85,10 @@ void lal_error(enum error_code code)
 			exit(1);
 		case ERROR_LABEL_NOT_FOUND:
 			printf("ERROR: Inputted label not found.\n");
+			exit(1);
+		case ERROR_LAL_REWRITE_FAILURE:
+			printf("ERROR: Unexpected issues during rewrite of .lal file.\n");
+			exit(1);
 	}
 }
 
@@ -256,7 +260,7 @@ commands *parse_inputs(int argc, char *argv[])
 		cmd->sub_cmds[i - 1].contents = init_char_v();
 		int offset = 0;
 
-		if(argv[i][0] == '-')
+		if(i == 1 && argv[i][0] == '-')
 		{
 			offset = 1;
 
@@ -460,7 +464,7 @@ int parse_line(alias_node *label, char *contents, int *index, off_t size)
 	return 1;
 }
 
-int parse_componenets(alias_node *label, char *contents, int *index, off_t size)
+int parse_components(alias_node *label, char *contents, int *index, off_t size)
 {
 	label->components_len = 0;
 
@@ -543,7 +547,7 @@ alias_node *process_lal_file(FILE *file)
 			lal_error(ERROR_NO_NAME);
 		}
 
-		if(parse_componenets(labels_head, contents, &c, size) == 0)
+		if(parse_components(labels_head, contents, &c, size) == 0)
 		{
 			lal_error(ERROR_NO_COMMAND);
 		}
@@ -556,6 +560,8 @@ alias_node *process_lal_file(FILE *file)
 			labels_head->next_node = NULL;
 		}
 	}
+
+	free(contents);
 
 	return labels;
 }
@@ -661,12 +667,22 @@ void reset_component(struct alias_components *component)
 	component->type = 0;
 }
 
+void delete_components(struct alias_components *components, int n_components)
+{
+	for(int i = 0; i < n_components; i++)
+	{
+		reset_component(&components[i]);
+	}
+}
+
 void delete_node(alias_node *node, alias_node *prev, alias_node **head)
 {
 	if(prev== NULL && node->next_node == NULL)
 	{
 		alias_node *tmp = node;
 		*head = NULL;
+		free_char_v(tmp->name);
+		delete_components(tmp->components, tmp->components_len);
 		free(tmp);
 	}
 	else if(node->next_node == NULL)
@@ -674,6 +690,8 @@ void delete_node(alias_node *node, alias_node *prev, alias_node **head)
 		alias_node *tmp = node;
 		node = NULL;
 		prev->next_node = NULL;
+		free_char_v(tmp->name);
+		delete_components(tmp->components, tmp->components_len);
 		free(tmp);
 	}
 	else if(prev== NULL)
@@ -681,11 +699,15 @@ void delete_node(alias_node *node, alias_node *prev, alias_node **head)
 		alias_node *tmp = node;
 		*head = node->next_node;
 		node = NULL;
+		free_char_v(tmp->name);
+		delete_components(tmp->components, tmp->components_len);
 		free(tmp);
 	}
 	else 
 	{
 		prev->next_node = node->next_node;
+		free_char_v(node->name);
+		delete_components(node->components, node->components_len);
 		free(node);
 	}
 }
@@ -704,11 +726,7 @@ void delete_node(alias_node *node, alias_node *prev, alias_node **head)
 
 #define FLAGS_RENAME_NAME_OFFSET 1
 #define FLAGS_RENAME_INPUT_OFFSET 2
-#define FLAGS_RENAME_MIN_SUBCMDS 2
-
-#define FLAGS_OVERWRITE_NAME_OFFSET 1
-#define FLAGS_OVERWRITE_INPUT_OFFSET 2
-#define FLAGS_OVERWRITE_MIN_SUBCMDS 2
+#define FLAGS_RENAME_MIN_SUBCMDS 3
 
 void append_to_lal(commands *cmd, alias_node **labels)
 {
@@ -873,26 +891,19 @@ void delete_from_lal(commands *cmd, alias_node **labels)
 		lal_error(ERROR_LABEL_NOT_FOUND);
 	}
 
-	free_char_v(current_node->name);
-
-	for(int c = 0; c < current_node->components_len; c++)
-	{
-		reset_component(&current_node->components[c]);
-	}
-
 	delete_node(current_node, prev_node, labels);
 }
 
 void rename_in_lal(commands *cmd, alias_node *labels)
 {
-	if(cmd->n_cmds < FLAGS_DELETE_MIN_SUBCMDS)
+	if(cmd->n_cmds < FLAGS_RENAME_MIN_SUBCMDS)
 	{
 		lal_error(ERROR_INSUFFICIENT_INPUTS);
 	}
 
 	alias_node *current_node = NULL;
 
-	char_v *name = cmd->sub_cmds[FLAGS_DELETE_NAME_OFFSET].contents;
+	char_v *name = cmd->sub_cmds[FLAGS_RENAME_NAME_OFFSET].contents;
 
 	for(alias_node *node = labels; node != NULL; node = node->next_node)
 	{
@@ -908,33 +919,8 @@ void rename_in_lal(commands *cmd, alias_node *labels)
 	{
 		lal_error(ERROR_LABEL_NOT_FOUND);
 	}
-}
 
-void overwrite_in_lal(commands *cmd, alias_node *labels)
-{
-	if(cmd->n_cmds < FLAGS_DELETE_MIN_SUBCMDS)
-	{
-		lal_error(ERROR_INSUFFICIENT_INPUTS);
-	}
-
-	alias_node *current_node = NULL;
-
-	char_v *name = cmd->sub_cmds[FLAGS_DELETE_NAME_OFFSET].contents;
-
-	for(alias_node *node = labels; node != NULL; node = node->next_node)
-	{
-		if(compare_char_v(node->name, name))
-		{
-			current_node = node;
-
-			break;
-		}
-	}
-
-	if(current_node == NULL)
-	{
-		lal_error(ERROR_LABEL_NOT_FOUND);
-	}
+	current_node->name = copy_char_v(cmd->sub_cmds[FLAGS_RENAME_INPUT_OFFSET].contents);
 }
 
 int use_flags(commands *cmd, alias_node **labels, FILE *file)
@@ -958,10 +944,6 @@ int use_flags(commands *cmd, alias_node **labels, FILE *file)
 	{
 		rename_in_lal(cmd, *labels);
 	}
-	else if(exact_match(flag->data, flag->len, "-overwrite", strlen("-overwrite")) || exact_match(flag->data, flag->len, "ow", strlen("ow")))
-	{
-		overwrite_in_lal(cmd, *labels);
-	}
 	else 
 	{
 		lal_error(ERROR_UNKNOWN_FLAG);
@@ -971,13 +953,101 @@ int use_flags(commands *cmd, alias_node **labels, FILE *file)
 
 	FILE *overwrite = freopen(NULL, "w+b", file);
 
-	fwrite(new_lal->data, sizeof(new_lal->data[0]), new_lal->len, overwrite);
+	if(overwrite == NULL)
+	{
+		return 0;
+	}
+
+	int write_check = fwrite(new_lal->data, sizeof(new_lal->data[0]), new_lal->len, overwrite);
+
+	if(feof(overwrite) || write_check != new_lal->len)
+	{
+		return 0;
+	}
+
+	free_char_v(new_lal);
 
 	return 1;
 }
 
-int use_input(commands *cmd, alias_node *labels)
+#define INPUT_NAME_OFFSET 0
+#define INPUT_ARGS_OFFSET 1
+#define INPUT_MIN_SUBCMDS 1
+
+void use_input(commands *cmd, alias_node *labels)
 {
+	if(cmd->n_cmds < INPUT_MIN_SUBCMDS)
+	{
+		lal_error(ERROR_INSUFFICIENT_INPUTS);
+	}
+
+	alias_node *current_node = NULL;
+
+	char_v *name = cmd->sub_cmds[INPUT_NAME_OFFSET].contents;
+
+	for(alias_node *node = labels; node != NULL; node = node->next_node)
+	{
+		if(compare_char_v(node->name, name))
+		{
+			current_node = node;
+
+			break;
+		}
+	}
+
+	if(current_node == NULL)
+	{
+		lal_error(ERROR_LABEL_NOT_FOUND);
+	}
+
+	char_v **args = malloc(sizeof(char_v *) * cmd->n_cmds - INPUT_ARGS_OFFSET);
+
+	for(int a = 0; a < cmd->n_cmds - INPUT_ARGS_OFFSET; a++)
+	{
+		args[a] = init_char_v();
+		char_v_append_char_v(args[a], cmd->sub_cmds[a + INPUT_ARGS_OFFSET].contents);
+	}
+
+	char_v *sys_cmd = init_char_v();
+
+	for(int i = 0; i < current_node->components_len; i++)
+	{
+		if(current_node->components[i].type == LAL_PLAIN)
+		{
+			char_v_append_char_v(sys_cmd, current_node->components[i].contents);
+		}
+		else if(current_node->components[i].type == LAL_ARG)
+		{
+			int arg_n = nn_int_from_str(current_node->components[i].contents->data, current_node->components[i].contents->len);
+
+			if(arg_n >= cmd->n_cmds - INPUT_ARGS_OFFSET)
+			{
+				lal_error(ERROR_INSUFFICIENT_INPUTS);
+			}
+
+			char_v_append_char_v(sys_cmd, args[arg_n]);
+		}
+		else if(current_node->components[i].type == LAL_END_LINE)
+		{
+			char_v_append(sys_cmd, '\0');
+
+			system(sys_cmd->data);
+			free_char_v(sys_cmd);
+
+			sys_cmd = init_char_v();
+		}
+		else if(current_node->components[i].type == LAL_END)
+		{
+			free_char_v(sys_cmd);
+		}
+	}
+
+	for(int a = 0; a < cmd->n_cmds - INPUT_ARGS_OFFSET; a++)
+	{
+		free_char_v(args[a]);
+	}
+
+	free(args);
 }
 
 int use_default(alias_node *labels)
@@ -990,11 +1060,12 @@ int run_command(commands *cmd, alias_node **labels, FILE *file)
 	{
 		if(use_flags(cmd, labels, file) == 0)
 		{
-
+			lal_error(ERROR_LAL_REWRITE_FAILURE);
 		}
 	}
 	else if(cmd->sub_cmds[0].type == INPUT)
 	{
+		use_input(cmd, *labels);
 	}
 	else if(cmd->sub_cmds[0].type == EMPTY)
 	{
